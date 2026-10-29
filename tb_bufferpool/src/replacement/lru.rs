@@ -118,9 +118,61 @@ impl Replacer for LRUReplacer {
     /// keep track of the frame_id in
     /// replacment cycle
     fn unpin(&mut self, frame_id: usize) {
+        if self.capacity <= frame_id {
+            return;
+        }
+
         if !self.list[frame_id].pin {
             return;
         }
+
         self.push(frame_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unpin() {
+        // buffer pool capacity is same as the replacer
+        // capacity and frame id is unique
+        let mut replacer = LRUReplacer::init(10);
+        assert!(replacer.list[0].pin);
+        replacer.unpin(0);
+        assert!(!replacer.list[0].pin);
+        let victim = replacer.evict();
+
+        assert!(victim.unwrap() == 0);
+    }
+
+    #[test]
+    fn test_no_replacement() {
+        let mut replacer = LRUReplacer::init(10);
+        assert!(replacer.evict() == None);
+    }
+
+    #[test]
+    fn test_eviction() {
+        let mut replacer = LRUReplacer::init(10);
+        replacer.unpin(0);
+        replacer.unpin(1);
+        replacer.unpin(2);
+
+        assert!(replacer.tail.unwrap() == 0);
+    }
+
+    #[test]
+    fn test_pin_in_between_frames() {
+        let mut replacer = LRUReplacer::init(10);
+        replacer.unpin(0);
+        replacer.unpin(1);
+        replacer.unpin(2);
+        replacer.pin(1);
+
+        assert_eq!(replacer.list[2].next, Some(0));
+        assert_eq!(replacer.list[0].next, replacer.list[2].prev);
+        assert_eq!(replacer.list[0].prev, Some(2));
     }
 }
