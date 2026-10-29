@@ -85,6 +85,10 @@ impl Replacer for LRUReplacer {
     /// each other.
 
     fn pin(&mut self, frame_id: usize) {
+        if frame_id >= self.capacity {
+            return;
+        }
+
         let frame = &mut self.list[frame_id];
         if frame.pin {
             return;
@@ -118,7 +122,7 @@ impl Replacer for LRUReplacer {
     /// keep track of the frame_id in
     /// replacment cycle
     fn unpin(&mut self, frame_id: usize) {
-        if self.capacity <= frame_id {
+        if frame_id >= self.capacity {
             return;
         }
 

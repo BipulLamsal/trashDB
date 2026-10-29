@@ -1,5 +1,7 @@
+mod clock;
 mod lru;
 
+pub use clock::ClockReplacer;
 pub use lru::LRUReplacer;
 
 pub trait Replacer {
