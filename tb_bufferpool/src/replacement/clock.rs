@@ -13,6 +13,8 @@ pub struct ClockReplacer {
     capacity: usize,
     list: Vec<Frame>,
     hand: usize,
+    /// Number of unpinned frames currently evictable
+    size: usize,
 }
 
 impl ClockReplacer {
@@ -26,6 +28,7 @@ impl ClockReplacer {
                 })
                 .collect(),
             hand: 0,
+            size: 0,
         }
     }
 }
@@ -35,7 +38,14 @@ impl Replacer for ClockReplacer {
         if frame_id >= self.capacity {
             return;
         }
-        self.list[frame_id].pin = true;
+
+        let frame = &mut self.list[frame_id];
+        if frame.pin {
+            return;
+        }
+
+        frame.pin = true;
+        self.size -= 1;
     }
 
     fn evict(&mut self) -> Option<usize> {
@@ -63,6 +73,7 @@ impl Replacer for ClockReplacer {
                 frame.referenced = false;
             } else {
                 frame.pin = true;
+                self.size -= 1;
                 return Some(id);
             }
         }
@@ -75,8 +86,18 @@ impl Replacer for ClockReplacer {
             return;
         }
 
-        self.list[frame_id].pin = false;
-        self.list[frame_id].referenced = true;
+        let frame = &mut self.list[frame_id];
+        if !frame.pin {
+            return;
+        }
+
+        frame.pin = false;
+        frame.referenced = true;
+        self.size += 1;
+    }
+
+    fn size(&self) -> usize {
+        self.size
     }
 }
 
@@ -122,6 +143,26 @@ mod tests {
         assert_eq!(replacer.evict(), Some(1));
         assert_eq!(replacer.evict(), Some(2));
         assert_eq!(replacer.evict(), None);
+    }
+
+    #[test]
+    fn test_size_tracks_evictable_frames() {
+        let mut replacer = ClockReplacer::init(10);
+        assert_eq!(replacer.size(), 0);
+
+        replacer.unpin(0);
+        replacer.unpin(1);
+        assert_eq!(replacer.size(), 2);
+
+        // unpinning an already unpinned frame must not double count
+        replacer.unpin(0);
+        assert_eq!(replacer.size(), 2);
+
+        assert_eq!(replacer.evict(), Some(0));
+        assert_eq!(replacer.size(), 1);
+
+        replacer.pin(1);
+        assert_eq!(replacer.size(), 0);
     }
 
     #[test]

@@ -23,6 +23,8 @@ pub struct LRUReplacer {
     head: Option<usize>,
     /// Least Recently used
     tail: Option<usize>,
+    /// Number of unpinned frames currently in the list
+    size: usize,
 }
 
 impl LRUReplacer {
@@ -38,6 +40,7 @@ impl LRUReplacer {
                 .collect(),
             head: None,
             tail: None,
+            size: 0,
         }
     }
 
@@ -64,6 +67,7 @@ impl LRUReplacer {
             self.head = Some(frame_id);
             self.tail = Some(frame_id);
         }
+        self.size += 1;
     }
 }
 
@@ -95,6 +99,7 @@ impl Replacer for LRUReplacer {
         }
         frame.pin = true;
         let (prev, next) = (frame.prev, frame.next);
+        self.size -= 1;
 
         // make sure we remove form the linked list
         match (prev, next) {
@@ -132,6 +137,10 @@ impl Replacer for LRUReplacer {
 
         self.push(frame_id);
     }
+
+    fn size(&self) -> usize {
+        self.size
+    }
 }
 
 #[cfg(test)]
@@ -165,6 +174,29 @@ mod tests {
         replacer.unpin(2);
 
         assert!(replacer.tail.unwrap() == 0);
+    }
+
+    #[test]
+    fn test_size_tracks_evictable_frames() {
+        let mut replacer = LRUReplacer::init(10);
+        assert_eq!(replacer.size(), 0);
+
+        replacer.unpin(0);
+        replacer.unpin(1);
+        assert_eq!(replacer.size(), 2);
+
+        // pinning removes the frame from the list
+        replacer.pin(0);
+        assert_eq!(replacer.size(), 1);
+
+        // evicting pins the victim as well
+        assert_eq!(replacer.evict(), Some(1));
+        assert_eq!(replacer.size(), 0);
+
+        // unpinning twice must not double count
+        replacer.unpin(0);
+        replacer.unpin(0);
+        assert_eq!(replacer.size(), 1);
     }
 
     #[test]
