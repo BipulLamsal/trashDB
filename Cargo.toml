@@ -1,3 +1,3 @@
 [workspace]
-members = ["tb_bufferpool"]
+members = ["tb_bufferpool", "tdb_common"]
 resolver = "3"

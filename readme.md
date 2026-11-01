@@ -7,5 +7,6 @@ An exploratory, experimental database. The goal is to learn from the best existi
 - [x] LRU replacement
 - [x] `Replacer` eviction trait
 - [x] Tests for LRU
-- [ ] LRU approximation with a clock hand and reference bit
-- [ ] ARC, covering both frequency and recency
+- [x] LRU approximation with a clock hand and reference bit with unit test 
+- [x] [ARC](https://www.cs.cmu.edu/~natassa/courses/15-721/papers/arcfast.pdf), covering both frequency and recency
+
