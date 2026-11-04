@@ -9,7 +9,9 @@ use std::{
     sync::{Arc, Mutex, RwLock, mpsc},
 };
 
-use tdb_storage::disk::{DiskManager, DiskRequest, DiskScheduler, PAGE_SIZE, RequestKind};
+use tdb_storage::disk::{
+    DiskManager, DiskRequest, DiskScheduler, PAGE_SIZE, PageBuffer, RequestKind,
+};
 
 use crate::{buffer::page_guard::WritePageGuard, replacement::ArcReplacer};
 
@@ -74,23 +76,7 @@ impl BufferPoolManger {
 
                 if let Some(old) = old_page_id {
                     if was_dirty {
-                        let frame = self.frames[victim].clone();
-
-                        let (done_tx, done_rx) = mpsc::sync_channel(0);
-                        let request = DiskRequest {
-                            kind: RequestKind::Write,
-                            page_id: old,
-                            data: frame.clone(),
-                            done: done_tx,
-                        };
-                        state
-                            .disk_scheduler
-                            .schedule(request)
-                            .expect("failed to schedule dirty page flush");
-
-                        if let Err(e) = done_rx.recv().expect("scheduler disconnected") {
-                            panic!("failed to flush dirty page during eviction: {e}");
-                        }
+                        Self::flush_page(&state, old, self.frames[victim].clone());
                     }
                     state.page_map.remove(&old);
                 }
@@ -134,7 +120,35 @@ impl BufferPoolManger {
 
     fn read_page(&mut self, page_id: usize) {}
 
-    fn write_page(&mut self, page_id: usize) {}
+    fn write_page(&self, page_id: usize) {
+        let mut state = self.state.lock().expect("lock failed for metadata");
+
+        if let Some(frame_id) = state.page_map.get(&page_id).copied() {
+            if state.meta[frame_id].is_dirty {
+                Self::flush_page(&state, page_id, self.frames[frame_id].clone());
+                state.meta[frame_id].is_dirty = false;
+            }
+        }
+    }
+
+    /// Flush a dirty frame to disk via the scheduler blocking until its done
+    fn flush_page(state: &BufferPoolState, page_id: usize, frame: PageBuffer) {
+        let (done_tx, done_rx) = mpsc::sync_channel(0);
+        let request = DiskRequest {
+            kind: RequestKind::Write,
+            page_id,
+            data: frame,
+            done: done_tx,
+        };
+        state
+            .disk_scheduler
+            .schedule(request)
+            .expect("failed to schedule dirty page flush");
+
+        if let Err(e) = done_rx.recv() {
+            panic!("failed to flush dirty page: {e}");
+        }
+    }
 
     pub fn delete_page(&self, page_id: usize) -> bool {
         let mut state = self.state.lock().expect("lock failed for metadata");
