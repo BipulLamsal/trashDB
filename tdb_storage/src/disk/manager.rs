@@ -51,14 +51,21 @@ impl DiskManager {
     }
 
     pub fn perform(&self, request: DiskRequest) -> io::Result<()> {
-        let mut data = request
-            .data
-            .lock()
-            .map_err(|_| io::Error::other("page buffer lock poisoned"))?;
-
         match request.kind {
-            RequestKind::Read => self.read_page(request.page_id, &mut data[..]),
-            RequestKind::Write => self.write_page(request.page_id, &data[..]),
+            RequestKind::Read => {
+                let mut data = request
+                    .data
+                    .write()
+                    .map_err(|_| io::Error::other("page buffer lock poisoned"))?;
+                self.read_page(request.page_id, &mut data[..])
+            }
+            RequestKind::Write => {
+                let data = request
+                    .data
+                    .read()
+                    .map_err(|_| io::Error::other("page buffer lock poisoned"))?;
+                self.write_page(request.page_id, &data[..])
+            }
         }
     }
 }

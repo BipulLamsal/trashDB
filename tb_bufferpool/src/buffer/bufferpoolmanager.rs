@@ -6,10 +6,10 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex, RwLock, mpsc},
 };
 
-use tdb_storage::disk::{DiskManager, PAGE_SIZE};
+use tdb_storage::disk::{DiskManager, DiskRequest, DiskScheduler, PAGE_SIZE, RequestKind};
 
 use crate::{buffer::page_guard::WritePageGuard, replacement::ArcReplacer};
 
@@ -26,7 +26,7 @@ struct BufferPoolState {
     free_list: Vec<usize>,
     replacer: ArcReplacer,
     page_id: usize,
-    disk_manager: DiskManager,
+    disk_scheduler: DiskScheduler,
 }
 
 pub struct BufferPoolManger {
@@ -47,7 +47,9 @@ impl BufferPoolManger {
             replacer: ArcReplacer::init(capacity),
             free_list: (0..capacity).collect(),
             page_id: 0,
-            disk_manager: DiskManager::new(path).expect("no database file  allocated"),
+            disk_scheduler: DiskScheduler::new(
+                DiskManager::new(path).expect("no database file  allocated"),
+            ),
         };
 
         Self {
@@ -72,11 +74,23 @@ impl BufferPoolManger {
 
                 if let Some(old) = old_page_id {
                     if was_dirty {
-                        let frame = self.frames[victim].read().unwrap();
+                        let frame = self.frames[victim].clone();
+
+                        let (done_tx, done_rx) = mpsc::sync_channel(0);
+                        let request = DiskRequest {
+                            kind: RequestKind::Write,
+                            page_id: old,
+                            data: frame.clone(),
+                            done: done_tx,
+                        };
                         state
-                            .disk_manager
-                            .write_page(old, frame.as_ref())
-                            .expect("failed to flush dirty page during eviction");
+                            .disk_scheduler
+                            .schedule(request)
+                            .expect("failed to schedule dirty page flush");
+
+                        if let Err(e) = done_rx.recv().expect("scheduler disconnected") {
+                            panic!("failed to flush dirty page during eviction: {e}");
+                        }
                     }
                     state.page_map.remove(&old);
                 }
@@ -122,12 +136,39 @@ impl BufferPoolManger {
 
     fn write_page(&mut self, page_id: usize) {}
 
-    fn delete_page(&mut self, page_id: usize) {}
+    pub fn delete_page(&self, page_id: usize) -> bool {
+        let mut state = self.state.lock().expect("lock failed for metadata");
+
+        let frame_id = match state.page_map.get(&page_id) {
+            Some(&f_id) => f_id,
+            None => {
+                return true;
+            }
+        };
+
+        if state.meta[frame_id].pin_count > 0 {
+            return false;
+        }
+
+        // we dont need to check the dity flag
+        // who care? its going to be deleted anyways
+
+        state.page_map.remove(&page_id);
+        state.meta[frame_id] = FrameMetadata {
+            page_id: None,
+            pin_count: 0,
+            is_dirty: false,
+        };
+
+        state.free_list.push(frame_id);
+
+        true
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::buffer::{bufferpoolmanager::BufferPoolManger, page_guard};
+    use crate::buffer::bufferpoolmanager::BufferPoolManger;
 
     #[test]
     fn test_bpm_new_page() {
